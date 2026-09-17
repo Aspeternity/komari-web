@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { z } from "zod";
 import { SettingCard } from "./SettingCard";
+import { TrafficHistoryMaintenanceCard } from "./TrafficHistoryMaintenanceCard";
 
 const maintenanceActionSchema = z.enum([
   "vacuum",
@@ -191,7 +192,7 @@ function maintenanceFailureDescription(
   return failures.length > 0 ? failures.join("; ") : undefined;
 }
 
-export function DatabaseMaintenanceCard() {
+function DatabaseMaintenanceCore() {
   const { t } = useTranslation();
   const [overview, setOverview] = React.useState<DatabaseOverview | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -371,5 +372,14 @@ export function DatabaseMaintenanceCard() {
         </Flex>
       </Flex>
     </SettingCard>
+  );
+}
+
+export function DatabaseMaintenanceCard() {
+  return (
+    <>
+      <DatabaseMaintenanceCore />
+      <TrafficHistoryMaintenanceCard />
+    </>
   );
 }
