@@ -2,12 +2,13 @@ name: i18n sync
 
 on:
   push:
-    branches: ["**"]
+    branches:
+      - radix
   workflow_dispatch: {}
 
 jobs:
   sync:
-    # 避免由机器人再次触发循环
+    # Avoid bot-triggered commit loops.
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     permissions:
@@ -38,10 +39,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          #I18N_LOCALES_DIR: ${{ vars.I18N_LOCALES_DIR }}
-          #I18N_SOURCE: ${{ vars.I18N_SOURCE }}
-          #I18N_AI_BATCH_SIZE: ${{ vars.I18N_AI_BATCH_SIZE }}
-          #I18N_AI_MAX_INPUT_CHARS: ${{ vars.I18N_AI_MAX_INPUT_CHARS }}
         run: |
           node script/i18n-sync.mjs
 
