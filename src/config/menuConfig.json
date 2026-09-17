@@ -135,6 +135,11 @@
           "icon": "Database"
         },
         {
+          "labelKey": "admin.nodeDetail.clientVersion",
+          "path": "/admin/agent-versions",
+          "icon": "Package"
+        },
+        {
           "labelKey": "logs.title",
           "path": "/admin/logs",
           "icon": "FileText"
