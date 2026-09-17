@@ -36,6 +36,7 @@ interface TrafficHistoryMaintenanceReport {
   affected_entities: string[];
   preview: TrafficHistoryOutlier[];
   truncated: boolean;
+  fingerprint: string;
   deleted_buckets?: number;
   remaining_buckets?: number;
   cleanup_limit: number;
@@ -66,10 +67,11 @@ export function TrafficHistoryMaintenanceCard() {
         thresholdHint: "按单次 Agent 上报的最大流量判断，不按整段汇总流量判断。默认 1 TiB。",
         scan: "扫描异常数据",
         scanning: "正在扫描",
-        result: "扫描结果",
         matches: "异常数据桶",
         entities: "受影响服务器",
-        safeBefore: "安全清理边界",
+        safeBefore: "完全封存边界",
+        safeBeforeHint:
+          "只扫描已经跨过所有 rollup 粒度封存边界的数据，避免尚在内存中的 5 分钟 / 小时 / 日级父桶把已清理的异常重新写回。",
         none: "未发现超过当前阈值的历史流量异常。",
         preview: "异常预览",
         server: "服务器",
@@ -95,20 +97,23 @@ export function TrafficHistoryMaintenanceCard() {
         deleted: "已删除数据桶",
         remaining: "剩余异常桶",
         invalidThreshold: "阈值必须不少于 0.0625 TiB（64 GiB）。",
-        staleHint: "清理会校验扫描时的边界和匹配数量；数据发生变化时会拒绝执行并要求重新扫描。",
+        staleHint:
+          "清理会再次校验扫描时的边界、匹配数量和完整候选集指纹；任何数据变化都会拒绝执行并要求重新扫描。",
       }
     : {
         title: "Historical traffic anomaly repair",
         description:
           "Scan persisted traffic.up / traffic.down rollups for implausibly large individual reports. Scanning is read-only; deletion always requires a second confirmation.",
         threshold: "Anomaly threshold",
-        thresholdHint: "Evaluated against the largest individual agent report, not the aggregate bucket sum. Default: 1 TiB.",
+        thresholdHint:
+          "Evaluated against the largest individual agent report, not the aggregate bucket sum. Default: 1 TiB.",
         scan: "Scan history",
         scanning: "Scanning",
-        result: "Scan result",
         matches: "Anomalous buckets",
         entities: "Affected servers",
-        safeBefore: "Safe cleanup boundary",
+        safeBefore: "Fully sealed boundary",
+        safeBeforeHint:
+          "Only history beyond every configured rollup sealing boundary is scanned, so mutable 5-minute/hour/day parent buckets cannot recreate a cleaned anomaly later.",
         none: "No historical traffic anomalies exceed the current threshold.",
         preview: "Anomaly preview",
         server: "Server",
@@ -119,9 +124,11 @@ export function TrafficHistoryMaintenanceCard() {
         aggregate: "Bucket total",
         upload: "Upload",
         download: "Download",
-        truncated: "Only the first 100 matches are shown; the summary count is authoritative.",
+        truncated:
+          "Only the first 100 matches are shown; the summary count is authoritative.",
         cleanup: "Clean anomalous buckets",
-        cleanupDisabled: "The match count exceeds the per-operation safety limit. Raise the threshold and scan again.",
+        cleanupDisabled:
+          "The match count exceeds the per-operation safety limit. Raise the threshold and scan again.",
         confirmTitle: "Clean historical traffic anomalies?",
         confirmDescription:
           "Only contaminated traffic.up / traffic.down rollup buckets from the preview are deleted. net.total cumulative counters are untouched. Small gaps can remain in the affected historical time ranges.",
@@ -134,7 +141,8 @@ export function TrafficHistoryMaintenanceCard() {
         deleted: "Deleted buckets",
         remaining: "Remaining anomalies",
         invalidThreshold: "Threshold must be at least 0.0625 TiB (64 GiB).",
-        staleHint: "Cleanup revalidates the preview boundary and match count. If data changed, it fails closed and requires a new scan.",
+        staleHint:
+          "Cleanup revalidates the preview boundary, match count, and complete candidate-set fingerprint. Any data change fails closed and requires a new scan.",
       };
 
   const [thresholdTiB, setThresholdTiB] = React.useState("1");
@@ -195,6 +203,7 @@ export function TrafficHistoryMaintenanceCard() {
           safe_before: string;
           preview_limit: number;
           expected_matches: number;
+          expected_fingerprint: string;
           confirm: boolean;
         },
         TrafficHistoryMaintenanceReport
@@ -203,6 +212,7 @@ export function TrafficHistoryMaintenanceCard() {
         safe_before: report.safe_before,
         preview_limit: PREVIEW_LIMIT,
         expected_matches: report.matching_buckets,
+        expected_fingerprint: report.fingerprint,
         confirm: true,
       });
       setReport(data);
@@ -254,7 +264,10 @@ export function TrafficHistoryMaintenanceCard() {
             </TextField.Root>
           </label>
           <Button disabled={scanning || cleaning} onClick={() => void scan()}>
-            <ScanSearch size={16} className={scanning ? "animate-pulse" : undefined} />
+            <ScanSearch
+              size={16}
+              className={scanning ? "animate-pulse" : undefined}
+            />
             {scanning ? copy.scanning : copy.scan}
           </Button>
         </Flex>
@@ -292,13 +305,21 @@ export function TrafficHistoryMaintenanceCard() {
               </div>
             </div>
 
+            <Text size="1" color="gray">
+              {copy.safeBeforeHint}
+            </Text>
+
             {report.deleted_buckets !== undefined ? (
-              <Callout.Root color={report.remaining_buckets === 0 ? "green" : "amber"} variant="surface">
+              <Callout.Root
+                color={report.remaining_buckets === 0 ? "green" : "amber"}
+                variant="surface"
+              >
                 <Callout.Icon>
                   <ShieldCheck size={16} />
                 </Callout.Icon>
                 <Callout.Text>
-                  {copy.deleted}: {report.deleted_buckets}; {copy.remaining}: {report.remaining_buckets ?? 0}
+                  {copy.deleted}: {report.deleted_buckets}; {copy.remaining}:{" "}
+                  {report.remaining_buckets ?? 0}
                 </Callout.Text>
               </Callout.Root>
             ) : null}
@@ -329,10 +350,16 @@ export function TrafficHistoryMaintenanceCard() {
                     </TableHeader>
                     <TableBody>
                       {report.preview.map((item, index) => (
-                        <TableRow key={`${item.metric_name}-${item.entity_id}-${item.bucket_start}-${item.resolution_milli}-${index}`}>
-                          <TableCell className="whitespace-nowrap">{item.entity_id}</TableCell>
+                        <TableRow
+                          key={`${item.metric_name}-${item.entity_id}-${item.bucket_start}-${item.resolution_milli}-${index}`}
+                        >
                           <TableCell className="whitespace-nowrap">
-                            {item.metric_name === "traffic.up" ? copy.upload : copy.download}
+                            {item.entity_id}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {item.metric_name === "traffic.up"
+                              ? copy.upload
+                              : copy.download}
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
                             {new Date(item.bucket_start).toLocaleString()}
@@ -371,7 +398,11 @@ export function TrafficHistoryMaintenanceCard() {
                     <Dialog.Trigger>
                       <Button
                         color="red"
-                        disabled={cleaning || cleanupOverLimit || report.deleted_buckets !== undefined}
+                        disabled={
+                          cleaning ||
+                          cleanupOverLimit ||
+                          report.deleted_buckets !== undefined
+                        }
                       >
                         <Trash2 size={16} />
                         {cleaning ? copy.cleaning : copy.cleanup}
@@ -387,10 +418,12 @@ export function TrafficHistoryMaintenanceCard() {
                           {copy.matches}: <strong>{report.matching_buckets}</strong>
                         </Text>
                         <Text size="2">
-                          {copy.entities}: <strong>{report.affected_entities.length}</strong>
+                          {copy.entities}:{" "}
+                          <strong>{report.affected_entities.length}</strong>
                         </Text>
                         <Text size="2">
-                          {copy.threshold}: <strong>{formatBytes(report.threshold_bytes)}</strong>
+                          {copy.threshold}:{" "}
+                          <strong>{formatBytes(report.threshold_bytes)}</strong>
                         </Text>
                       </Flex>
                       <Flex gap="3" mt="4" justify="end">
